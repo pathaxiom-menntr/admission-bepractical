@@ -11,7 +11,7 @@ interface NavbarProps {
 
 export default function Navbar({ ctaText = "Enquire Now", onCtaClick }: NavbarProps) {
   return (
-    <header className="sticky top-0 z-50 w-full bg-white py-3.5 shadow-[0px_8px_24px_0px_rgba(29,78,216,0.08)]">
+    <header className="sticky top-0 z-50 w-full bg-white py-3.5 shadow-[0px_6px_15.8px_0px_rgba(31,7,125,0.25)]">
       <div className="px-6 sm:px-12 lg:px-20">
         <div className="flex items-center justify-between">
           {/* Logo Section */}
