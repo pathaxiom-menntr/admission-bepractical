@@ -1,0 +1,106 @@
+name: Build and Deploy Frontend to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGISTRY: menntracr-f9duach7ghcjhacr.azurecr.io
+  IMAGE_NAME: bepractical-frontend
+  CONTAINER_APP_NAME: be-practical-admission
+  RESOURCE_GROUP: Bepracticalwebsite
+
+jobs:
+  build-and-deploy:
+    name: Build → Push → Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------
+      # Generate image tags
+      # ----------------------------------------------------------
+      - name: Derive image tags
+        id: meta
+        run: |
+          SHA_TAG="sha-$(git rev-parse --short HEAD)"
+          echo "sha-tag=$SHA_TAG" >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------
+      # Print repository and owner ID for OIDC Setup
+      # ----------------------------------------------------------
+      - name: Print Repository OIDC Subject Claim Info
+        run: |
+          echo "Organization Owner ID: ${{ github.repository_owner_id }}"
+          echo "Repository ID: ${{ github.repository_id }}"
+          echo "Suggested Subject Claim: repo:${{ github.repository_owner }}@${{ github.repository_owner_id }}/${{ github.event.repository.name }}@${{ github.repository_id }}:ref:refs/heads/main"
+
+      # ----------------------------------------------------------
+      # Azure Login (OIDC) — Done early so we can log into ACR
+      # ----------------------------------------------------------
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ----------------------------------------------------------
+      # Login to ACR (using the OIDC Azure CLI session)
+      # ----------------------------------------------------------
+      - name: Log in to Azure Container Registry
+        run: |
+          az acr login --name menntracr
+
+      # ----------------------------------------------------------
+      # Setup Docker Buildx
+      # ----------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ----------------------------------------------------------
+      # Build & Push Image
+      # ----------------------------------------------------------
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_INSTITUTION_ID=${{ vars.NEXT_PUBLIC_INSTITUTION_ID }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha-tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ----------------------------------------------------------
+      # Deploy new image to ACA
+      # ----------------------------------------------------------
+      - name: Deploy to Azure Container Apps
+        run: |
+          az containerapp update \
+            --name "${{ env.CONTAINER_APP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha-tag }}"
+
+      # ----------------------------------------------------------
+      # Show active revision
+      # ----------------------------------------------------------
+      - name: Show active revision
+        run: |
+          az containerapp revision list \
+            --name "${{ env.CONTAINER_APP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "[?properties.active].{name:name,image:properties.template.containers[0].image,created:properties.createdTime}" \
+            --output table
